@@ -1,6 +1,8 @@
 #include "DeployWorker.h"
+#include "RuntimeError.h"
 
 #include <string.h>
+#include <limits.h>
 #include <stdexcept>
 
 using namespace fsevent;
@@ -31,11 +33,22 @@ DeployWorker::~DeployWorker()
 	}
 }
 
+std::string abspath(std::string path)
+{
+	char filename[PATH_MAX] = "";
+	if (realpath(path.c_str(), filename) == NULL) {
+		throw RuntimeError("realpath " + path + " failed!");
+	}
+	return 	filename;
+}
+
 pid_t DeployWorker::deploy(std::vector<std::string> args, std::string path)
 {
 	if (args.size() == 0) {
 		throw std::invalid_argument("args.size() must > 0");
 	}
+	path = abspath(path);
+	args[0] = abspath(args[0]);
 
 	pid_t pid = process_watcher_.spwan_process(args);
 	fs_watcher_.add_watch(path, ATTRIB | MODIFY);
@@ -148,7 +161,6 @@ void DeployWorker::on_fs_event(std::string path, uint32_t mask)
 {
 	printf("file %s updated, kill related processes...\n", path.c_str());
 	printf("works_.size(): %zu\n", works_.size());
-	redeploy_interval_ = 1;
 
 	std::vector<pid_t> pids;
 	{
@@ -160,6 +172,10 @@ void DeployWorker::on_fs_event(std::string path, uint32_t mask)
 				pids.push_back(work.pid);
 			}
 		}
+	}
+
+	if (pids.size()) {
+		redeploy_interval_ = 1;
 	}
 	
 	for (auto pid: pids) {

@@ -2,6 +2,7 @@
 #include "RuntimeError.h"
 
 #include <stdio.h>
+#include <limits.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/signalfd.h>
@@ -50,12 +51,18 @@ pid_t ProcessWatcher::spwan_process(std::vector<std::string> args)
 		infos_[pid] = info;
 		printf("process %d spawned\n", pid);
 	} else {  // child
+		for (int i = 0; i < args.size(); i++) {
+			printf("  args[%d]: %s\n", i, args[i].c_str());
+		}
+
 		std::vector<char*> cargs;
 		for (int i = 0; i < args.size(); i++) {
 			cargs.push_back(const_cast<char*>(args[i].c_str()));
 		}
-		printf("prepare to exec %s in %d\n", cargs[0], getpid());
+
+		printf("prepare to exec %s... in %d\n", cargs[0], getpid());
 		execve(cargs[0], &cargs[0], environ);
+		throw RuntimeError("exec failed! " + args[0]);
 		return -1; // NEVER RUNS HERE
 	}
 	return pid;

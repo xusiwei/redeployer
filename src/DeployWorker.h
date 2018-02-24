@@ -60,10 +60,6 @@ private:
 
 	std::atomic<bool> started_{false};
 	std::atomic<long> redeploy_interval_{1};
-
-	pid_t pid_;
-	std::string path_;
-	std::vector<std::string> args_;
 };
 
 #endif  // _DEPLOY_WORKER_H_
