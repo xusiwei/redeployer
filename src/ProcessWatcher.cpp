@@ -98,7 +98,7 @@ void ProcessWatcher::on_fd_events(int fd, short events)
 	struct signalfd_siginfo ssi;
 	long nbytes = read(sigfd_, &ssi, sizeof(ssi));
 	if (nbytes < 0) {
-		throw RuntimeError("read signalfd failed");
+		throw RuntimeError("read signalfd failed!");
 	}
 	pid_t pid = ssi.ssi_pid;
 	printf("got signal `%s` from %d\n", strsignal(ssi.ssi_signo), pid);

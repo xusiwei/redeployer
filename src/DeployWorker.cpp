@@ -9,9 +9,11 @@ using namespace fsevent;
 using namespace std::placeholders;
 
 const static long kMaxRedeployInterval = 64;
+const static long kDelayUnit = 1000; // ms
 
 DeployWorker::DeployWorker()
-	: func_queue_(1024),
+	: queue_(1024),
+	  scheduler_(),
 	  fs_watcher_(std::bind(&DeployWorker::FsEventCallback, this, _1, _2)),
 	  process_watcher_(std::bind(&DeployWorker::ProcessCallback, this, _1, _2))
 {
@@ -25,12 +27,13 @@ DeployWorker::~DeployWorker()
 			undeloy(e.first);
 		}
 	}
-	if (event_poller_.joinable()) {
-		event_poller_.join();
+	if (poller_thread_.joinable()) {
+		poller_thread_.join();
 	}
-	if (cb_caller_.joinable()) {
-		cb_caller_.join();
+	if (handler_thread_.joinable()) {
+		handler_thread_.join();
 	}
+	scheduler_.shutdown();
 }
 
 std::string abspath(std::string path)
@@ -77,15 +80,16 @@ void DeployWorker::start()
 	poller_.add_fd(process_watcher_.get_fd(),
 		std::bind(&ProcessWatcher::on_fd_events, &process_watcher_, _1, _2));
 	
-	cb_caller_ = std::thread(std::bind(&DeployWorker::run, this));
-	event_poller_ = std::thread(std::bind(&EpollPoller::loop, &poller_));
+	handler_thread_ = std::thread(std::bind(&DeployWorker::run, this));
+	poller_thread_ = std::thread(std::bind(&EpollPoller::loop, &poller_));
 	started_ = true;
+	scheduler_.start();
 }
 
 void DeployWorker::run()
 {
 	Function func;
-	while (func = func_queue_.take()) {
+	while (func = queue_.take()) {
 		func();
 	}
 }
@@ -93,7 +97,7 @@ void DeployWorker::run()
 void DeployWorker::stop()
 {
 	Function nop;
-	func_queue_.put(nop); // stop cb_caller_
+	queue_.put(nop); // stop cb_caller_
 	poller_.stop(); // stop event_poller_
 	started_ = false;
 }
@@ -117,50 +121,51 @@ void DeployWorker::ProcessCallback(pid_t pid, const ProcessWatcher::ProcessInfo&
 		printf(", resumed by SIGCONT");
 	}
 	printf("\n");
-	func_queue_.put(std::bind(&DeployWorker::on_child_exit, this, pid, info));
-	// on_child_exit(pid, info);
+	queue_.put(std::bind(&DeployWorker::on_child_exit, this, pid, info));
 }
 
 void DeployWorker::FsEventCallback(std::string path, uint32_t mask)
 {
 	if (!started_) return;
 	printf("EVENT [%x] on %s with %x\n", mask, path.c_str(), mask);
-	// func_queue_.put(std::bind(&DeployWorker::on_fs_event, this, path, mask));
-	on_fs_event(path, mask);
+	queue_.put(std::bind(&DeployWorker::on_fs_event, this, path, mask));
 }
 
-void DeployWorker::on_child_exit(pid_t pid, const ProcessWatcher::ProcessInfo& info)
+bool DeployWorker::redeploy(pid_t pid)
 {
-	printf("child %d exited, restart it after %lds...\n", pid, redeploy_interval_.load());
-
 	std::string path;
 	std::vector<std::string> args;
+
+	// clean this process info from the map
 	{
 		std::lock_guard<std::mutex> _l(mutex_);
 		auto it = works_.find(pid);
 		if (it != works_.end()) {
 			args = it->second.args;
 			path = it->second.path;
-		 	works_.erase(pid);
+			works_.erase(pid);
 		}
 	}
-	if (args.size()) {
-		long seconds = redeploy_interval_;
-		long twice = seconds*2;
-		sleep(seconds);
-		deploy(args, path);
-		printf("now redeploy_interval_: %ld\n", redeploy_interval_.load());
-		if (redeploy_interval_.compare_exchange_strong(seconds, twice)
-		 && redeploy_interval_ > kMaxRedeployInterval) {
-			redeploy_interval_ = 1;
-		}
+
+	// schedule a re-deploy work
+	std::string task_name = "redeploy " + path;
+	if (args.size() && !scheduler_.has_schedule(task_name)) {
+		auto ms = std::chrono::milliseconds(next_redeploy_delay() * 1000);
+		printf("schedule a re-deploy task %s...\n", task_name.c_str());
+		scheduler_.schedule(std::bind(&DeployWorker::deploy, this, args, path), ms, task_name);
 	}
+}
+
+void DeployWorker::on_child_exit(pid_t pid, const ProcessWatcher::ProcessInfo& info)
+{
+	printf("child %d exited, restart it after %lds...\n", pid, redeploy_interval_.load());
+
+	redeploy(pid);
 }
 
 void DeployWorker::on_fs_event(std::string path, uint32_t mask)
 {
-	printf("file %s updated, kill related processes...\n", path.c_str());
-	printf("works_.size(): %zu\n", works_.size());
+	printf("file %s updated, works_.size(): %zu...\n", path.c_str(), works_.size());
 
 	std::vector<pid_t> pids;
 	{
@@ -174,13 +179,28 @@ void DeployWorker::on_fs_event(std::string path, uint32_t mask)
 		}
 	}
 
-	if (pids.size()) {
+	for (auto pid: pids) {
+		printf("  %s: un-deploy process %d...\n", path.c_str(), pid);
+		undeloy(pid);
+		reset_redeploy_delay();
+		printf("redeploy_interval_: %ld\n", redeploy_interval_.load());
+		redeploy(pid);
+	}
+}
+
+long DeployWorker::next_redeploy_delay()
+{
+	long current = redeploy_interval_;
+	long twice = current * 2;
+	printf("next redeploy delay: %ld\n", redeploy_interval_.load());
+	if (redeploy_interval_.compare_exchange_strong(current, twice)
+		&& redeploy_interval_ > kMaxRedeployInterval) {
 		redeploy_interval_ = 1;
 	}
-	
-	for (auto pid: pids) {
-		printf("  %s: kill process %d...\n", path.c_str(), pid);
-		process_watcher_.kill_process(pid, SIGTERM);
-		printf("set redeploy_interval_: %ld\n", redeploy_interval_.load());
-	}
+	return current;
+}
+
+void DeployWorker::reset_redeploy_delay()
+{
+	redeploy_interval_ = 1;
 }

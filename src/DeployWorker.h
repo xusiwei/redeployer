@@ -5,6 +5,7 @@
 #include "BlockingQueue.h"
 #include "ProcessWatcher.h"
 #include "FileSystemWatcher.h"
+#include "FunctionScheduler.h"
 
 #include <thread>
 #include <vector>
@@ -13,8 +14,6 @@
 class DeployWorker
 {
 public:
-	typedef std::function<void(void)> Function;
-
 	DeployWorker();
 
 	~DeployWorker();
@@ -25,10 +24,15 @@ public:
 
 	bool undeloy(pid_t pid);
 
+	bool redeploy(pid_t pid);
+
 	void stop();
 
 protected:
+
 	void run();
+	long next_redeploy_delay();
+	void reset_redeploy_delay();
 
 	void ProcessCallback(pid_t pid, const ProcessWatcher::ProcessInfo& info);
 	void on_child_exit(pid_t pid, const ProcessWatcher::ProcessInfo& info);
@@ -37,6 +41,7 @@ protected:
 	void on_fs_event(std::string path, uint32_t mask);
 
 private:
+	typedef std::function<void(void)> Function;
 	struct Work {
 		pid_t pid;
 		std::string path;
@@ -48,12 +53,13 @@ private:
 	};
 
 private:
-	BlockingQueue<Function> func_queue_;
+	BlockingQueue<Function> queue_;
+	FunctionScheduler scheduler_;
 	FileSystemWatcher fs_watcher_;
 	ProcessWatcher process_watcher_;
 	EpollPoller poller_;
-	std::thread cb_caller_;
-	std::thread event_poller_;
+	std::thread handler_thread_;
+	std::thread poller_thread_;
 
 	std::mutex mutex_;
 	std::map<pid_t, Work> works_;

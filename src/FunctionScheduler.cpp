@@ -169,6 +169,7 @@ void FunctionScheduler::shutdown()
 	{
 		std::lock_guard<std::mutex> _l(mutex_);
 		functions_.clear();
+		name_index_.clear();
 	}
 	if (thread_.joinable()) {
 		thread_.join();
