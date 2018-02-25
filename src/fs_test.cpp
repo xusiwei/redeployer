@@ -16,16 +16,18 @@ long get_milliseconds()
 
 void test_function_scheduler()
 {
-	get_milliseconds();
 	FunctionScheduler scheduler;
 
-	scheduler.schedule([](){
+	get_milliseconds();
+	scheduler.start();
+
+	scheduler.schedule([]() {
 		cout << "scheduled " << " on ticks " << get_milliseconds() << " ...\n";
 	}, milliseconds(1000));
 
 	scheduler.schedule([]() {
 		static int count = 0;
-		cout << "schedule "  << ++count << " on ticks " << get_milliseconds() << " ...\n";
+		cout << "schedule " << ++count << " on ticks " << get_milliseconds() << " ...\n";
 	}, milliseconds(500), milliseconds(100));
 
 	this_thread::sleep_for(seconds(3));
