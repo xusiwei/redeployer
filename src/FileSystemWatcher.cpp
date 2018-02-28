@@ -9,7 +9,7 @@
 #include <stdexcept>
 
 FileSystemWatcher::FileSystemWatcher(Callback cb)
-	: default_cb_(cb), default_info_("", 0, default_cb_)
+	: default_cb_(cb)
 {
 	fd_ = inotify_init1(IN_CLOEXEC | IN_NONBLOCK);
 	if (fd_ < 0) {
@@ -106,14 +106,14 @@ int FileSystemWatcher::get_wd(std::string path)
 	return -1;
 }
 
-const FileSystemWatcher::WatchInfo& FileSystemWatcher::get_info(int wd)
+FileSystemWatcher::WatchInfo* FileSystemWatcher::get_info(int wd)
 {
 	std::lock_guard<std::mutex> _l(mutex_);
 	auto it = infos_.find(wd);
 	if (it != infos_.end()) {
-		return it->second;
+		return &it->second;
 	}
-	return default_info_;
+	return nullptr;
 }
 
 std::string path_join(std::string dir, std::string name)
@@ -157,9 +157,9 @@ void FileSystemWatcher::on_fd_events(int fd, short events)
 		// printf("raw event %x on '%s' with %d %d\n", evt->mask, evt->name, evt->len, evt->cookie);
 		auto info = get_info(evt->wd);
 		int mask = imask_to_emask(evt->mask);
-		if (mask) {
-			std::string path = path_join(info.path, evt->name);
-			info.cb(path, mask);			
+		if (info && mask) {
+			std::string full = path_join(info->path, evt->name);
+			info->cb(full, mask);
 		}
 		p = evt->name + evt->len;  // move to next event
 	}

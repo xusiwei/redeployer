@@ -80,7 +80,7 @@ FunctionScheduler::~FunctionScheduler()
 	shutdown();
 }
 
-std::shared_ptr<RepeatFunc> FunctionScheduler::call_one()
+std::shared_ptr<RepeatFunc> FunctionScheduler::take_front()
 {
 	std::unique_lock<std::mutex> _lock(mutex_);
 	while (functions_.empty()) {
@@ -93,16 +93,15 @@ std::shared_ptr<RepeatFunc> FunctionScheduler::call_one()
 	std::this_thread::sleep_until(it->first);
 
 	auto prf = it->second;
-	if (prf) {
-		// fire the callback
-		prf->run();
+
+	// unregister from schedule name map
+	if (prf && prf->name.size()) {
+		name_index_.erase(prf->name);
 	}
 
 	// remove the front element
 	functions_.erase(it);
-	if (prf && prf->name.size()) {
-		name_index_.erase(prf->name);  // unregister a schedule name
-	}
+
 	return prf;
 }
 
@@ -110,17 +109,23 @@ void FunctionScheduler::run()
 {
 	std::shared_ptr<RepeatFunc> prf;
 	while (running_) {
-		prf = call_one();
+		prf = take_front();
 		if (!prf) {
 			break;
 		}
+
+		// run callback without `mutex_` effects
+		if (prf) {
+			prf->run();
+		}
+
 		if (prf->valid()) {
-			push_one(prf);
+			push_end(prf);
 		}
 	}
 }
 
-void FunctionScheduler::push_one(std::shared_ptr<RepeatFunc> prf)
+void FunctionScheduler::push_end(std::shared_ptr<RepeatFunc> prf)
 {
 	std::lock_guard<std::mutex> _l(mutex_);
 	time_point<system_clock, milliseconds> nrt;  // next run time
@@ -148,7 +153,7 @@ void FunctionScheduler::schedule(std::function<void(void)> func,
 		name_index_.insert(std::make_pair(name, prf));
 	}
 
-	push_one(prf);
+	push_end(prf);
 }
 
 void FunctionScheduler::schedule(std::function<void(void)> func, std::chrono::milliseconds delay, std::string name)
@@ -160,7 +165,7 @@ void FunctionScheduler::schedule(std::function<void(void)> func, std::chrono::mi
 		name_index_.insert(std::make_pair(name, prf));
 	}
 
-	push_one(prf);
+	push_end(prf);
 }
 
 void FunctionScheduler::shutdown()

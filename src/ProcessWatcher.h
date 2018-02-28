@@ -42,10 +42,13 @@ public:
 	void run();
 
 private:
+	ProcessInfo* get_info(pid_t pid);
+
+private:
 	int sigfd_;
-	Callback on_exit_;
+	Callback callback_;
 	std::map<pid_t, ProcessInfo> infos_;
-	std::mutex mutex_;
+	mutable std::mutex mutex_;
 };
 
 #endif  // _PROCESS_WATCHER_H_

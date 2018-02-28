@@ -14,7 +14,7 @@
 
 ProcessWatcher::ProcessWatcher(Callback cb)
 {
-	on_exit_ = cb;
+	callback_ = cb;
 
 	sigset_t mask;
 	sigemptyset(&mask);
@@ -110,17 +110,24 @@ void ProcessWatcher::on_fd_events(int fd, short events)
 		throw RuntimeError("wait failed");
 	}
 
-	std::lock_guard<std::mutex> _l(mutex_);
-	auto it = infos_.find(pid);
-	if (it != infos_.end()) {
-		it->second.status = status;
-		it->second.rusage = rus;
-		memcpy(&it->second.siginfo, &ssi, sizeof(ssi));
-		on_exit_(pid, it->second);
+	// make sure call `callback_` without effect of `mutex_`
+	auto info = get_info(pid);
+	if (info) {
+		callback_(pid, *info);
 	}
 }
 
 int ProcessWatcher::get_fd()
 {
 	return sigfd_;
+}
+
+ProcessWatcher::ProcessInfo* ProcessWatcher::get_info(pid_t pid)
+{
+	std::lock_guard<std::mutex> _l(mutex_);
+	auto it = infos_.find(pid);
+	if (it != infos_.end()) {
+		return &it->second;
+	}
+	return nullptr;
 }

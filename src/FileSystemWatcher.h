@@ -29,9 +29,9 @@ public:
 	FileSystemWatcher(Callback cb);
 	
 	~FileSystemWatcher();
-	
+
 	void add_watch(std::string path, uint32_t mask);
-	
+
 	void add_watch(std::string path, uint32_t mask, Callback cb);
 
 	bool remove_watch(std::string path);
@@ -54,12 +54,11 @@ private:
 		WatchInfo& operator=(const WatchInfo&) = default;
 	};
 	int get_wd(std::string path);
-	const WatchInfo& get_info(int wd);
+	WatchInfo* get_info(int wd);
 
 private:
 	int fd_;
 	Callback default_cb_;
-	WatchInfo default_info_;
 	std::mutex mutex_;
 	std::map<std::string, int> wds_;
 	std::map<int, WatchInfo> infos_;

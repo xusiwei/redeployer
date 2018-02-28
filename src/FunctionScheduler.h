@@ -41,8 +41,8 @@ public:
 
 private:
 	void run();
-	std::shared_ptr<RepeatFunc> call_one();
-	void push_one(std::shared_ptr<RepeatFunc> prf);
+	std::shared_ptr<RepeatFunc> take_front();
+	void push_end(std::shared_ptr<RepeatFunc> prf);
 
 	using time_point_t = std::chrono::time_point<std::chrono::system_clock, std::chrono::milliseconds>;
 
